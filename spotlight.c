@@ -1,0 +1,255 @@
+//#include <avr/io.h>
+#include <stdlib.h>
+//#include <avr/pgmspace.h>
+#include <avr/interrupt.h>
+#include <util/crc16.h>
+#include <stdint.h>
+#include "round_robin_buffer.h"
+
+
+/// set up a timer interrupt that fires 16000 times per second,
+/// This means that at 8 Mhz, the timer fires every 500 ticks.
+/// 16000 ticks per second means that an 8 bit pwm will do 
+/// 62.5 cycles per second.
+void timer_init()
+{
+
+    // count to 500     
+	OCR1A = 499; 
+
+    // Set up timer:
+    // * prescaler = 1 (CS1x = 001)
+    // * CTC mode with OCR1A as upper level (WGM1x = 0100)
+	TCCR1B |= _BV(CS10) | _BV(WGM12); 
+
+    // enable timer interrupt
+    TIMSK |= _BV(OCIE1A);
+ }
+
+void usart_init()
+{
+    const unsigned long baudrate = 2400;
+    const unsigned long ubrr = (F_CPU/(16UL * baudrate)) - 1;
+
+    UBRRL = ubrr;
+    UBRRH = ubrr >> 8;
+
+    // leave the rest default: 8n1, 16 samples per bit
+  
+    // enable serial input interrupt and serial input. 
+    // need the main program to do sei()
+    UCSRB |= _BV( RXCIE) | _BV(RXEN);
+}
+
+
+void ioinit()
+{
+    // TODO
+}
+
+struct pwm_state
+{
+    uint8_t value; ///< actual pwm value
+    uint8_t counter; ///< running counter
+};
+
+struct led
+{
+    struct pwm_state red;
+    struct pwm_state green;
+    struct pwm_state blue;
+};
+
+
+volatile led leds[4];
+volatile round_robin_buffer<> data_buffer = {0,0,0,0, {0}};
+volatile round_robin_buffer<4> command_buffer = {0,0,0,0, {0}};
+
+
+void execute_command( uint8_t command)
+{
+}
+
+int
+main(void)
+{
+	leds[0].red.value = 1;
+	leds[0].green.value = 2;
+	leds[0].blue.value = 3;
+
+    ioinit();
+    timer_init();
+    usart_init();
+    sei();
+
+	for (;;)
+	{
+        
+        uint8_t command;
+        if (command_buffer.read( &command))
+        {
+            execute_command( command);
+        }
+         
+	}
+	return 0;
+}
+
+ISR( USART_RX_vect)
+{
+    static uint8_t     count = 0;
+    static uint8_t     device_address = 0;
+    static uint16_t    crc = 0xFFFF;
+
+    static enum {
+        Noise,
+        Preamble,
+        Address,
+        Size,
+        Data,
+        Checksum1,
+        Checksum2
+        } state = Noise;
+
+    register uint8_t in = UDR;
+    switch (state)
+    {
+        case Noise:
+            if (!in)
+            {
+                state = Preamble;
+            }
+            break;
+        case Preamble:
+        {
+            const uint8_t end_preamble = 0x55;
+            if (in)
+            {
+                if (in == end_preamble)
+                {
+                    state = Address;
+                }
+                else
+                {
+                    state = Noise;
+                }
+            }
+        }
+            break;
+        case Address:
+            // address zero means 'all', both as a packet
+            // address and as a device address. 
+            // in any other case, the packet addres should match
+            // our device address
+            if (in == device_address || !device_address || !in)
+            {
+                state = Size;
+            }
+            else 
+            {
+                state = Noise;
+            }
+            break;
+        case Size:
+            count = (in & 0x0F) + 1;
+            state = Data;
+            data_buffer.reset_tentative();
+            crc = 0x0000; // reset crc
+            break;
+        case Data:
+            crc = _crc_xmodem_update( crc, in);
+            // if we cannot write to the data_buffer, discard
+            // the whole packet
+            if (!data_buffer.write_tentative( in))
+            {
+                data_buffer.reset_tentative();
+                state = Noise;
+            }
+            else
+            {
+                // if this is the last byte, 
+                // move to the checksum state
+                if (!--count)
+                {
+                    state = Checksum1;
+                }
+            }
+           break;
+        case Checksum1:
+            crc = _crc_xmodem_update( crc, in);
+            state = Checksum2;
+            break;
+        case Checksum2:
+            if (!_crc_xmodem_update( crc, in))
+            {
+                // checksum verified, commit packet data to data_buffer
+                data_buffer.commit();
+            }
+            else
+            {
+                data_buffer.reset_tentative();
+            }
+
+            // we're finished with our packet
+            // fall back to noise state.
+            state = Noise; 
+
+            break;
+    }
+
+    //data_buffer.write( UDR);
+}
+
+uint8_t do_6pwm(  volatile led *leds)
+{
+    uint8_t result;
+    asm volatile(
+        "ld     __tmp_reg__, %a1+\n"
+        "ld     r24, %a1          \n"
+        "add    __tmp_reg__, r24  \n" // add the first byte to the second
+        "st     %a1+, __tmp_reg__\n"
+        "rol    %0               \n" // rotate the carry into the pwm bits
+        "\n"
+        "ld     __tmp_reg__, %a1+\n"
+        "ld     r24, %a1          \n"
+        "add    __tmp_reg__, r24  \n" // add the first byte to the second
+        "st     %a1+, __tmp_reg__\n"
+        "rol    %0               \n" // rotate the carry into the pwm bits
+        "\n"
+        "ld     __tmp_reg__, %a1+\n"
+        "ld     r24, %a1          \n"
+        "add    __tmp_reg__, r24  \n" // add the first byte to the second
+        "st     %a1+, __tmp_reg__\n"
+        "rol    %0               \n" // rotate the carry into the pwm bits
+        "\n"
+        "ld     __tmp_reg__, %a1+\n"
+        "ld     r24, %a1          \n"
+        "add    __tmp_reg__, r24  \n" // add the first byte to the second
+        "st     %a1+, __tmp_reg__\n"
+        "rol    %0               \n" // rotate the carry into the pwm bits
+        "\n"
+        "ld     __tmp_reg__, %a1+\n"
+        "ld     r24, %a1          \n"
+        "add    __tmp_reg__, r24  \n" // add the first byte to the second
+        "st     %a1+, __tmp_reg__\n"
+        "rol    %0               \n" // rotate the carry into the pwm bits
+        "\n"
+        "ld     __tmp_reg__, %a1+\n"
+        "ld     r24, %a1          \n"
+        "add    __tmp_reg__, r24  \n" // add the first byte to the second
+        "st     %a1+, __tmp_reg__\n"
+        "rol    %0               \n" // rotate the carry into the pwm bits
+        "\n"
+        : "=a" (result)
+        : "e" (leds)
+        : "r24");
+    return result;
+}
+
+ISR( TIMER1_COMPA_vect)
+{
+    PORTB = do_6pwm( &leds[0]);
+    PORTD = do_6pwm( &leds[2]);
+
+}
+

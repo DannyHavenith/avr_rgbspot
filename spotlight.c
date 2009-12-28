@@ -43,8 +43,19 @@ void usart_init()
 
 
 void ioinit()
-{
-    // TODO
+{ 
+    // hardcoded ioinit, since it's hard to capture the 
+    // pin assignments in DEFINES.
+
+    // PB0-PB5 are PWM 0-5 outputs (rgb0 and rgb1)
+    // PD1-PD6 are PWM 6-11 (rgb2 and rgb3)
+    DDRD = 0x7e; // all but bit 0 and 7 to output
+    DDRB = 0x3f; // bits 0-5 to output
+    DDRA = 0;
+
+    // make sure all lights are off.
+    PORTD = 0;
+    PORTB = 0;
 }
 
 struct pwm_state
@@ -63,12 +74,20 @@ struct led
 
 volatile led leds[4];
 volatile round_robin_buffer<> data_buffer = {0,0,0,0, {0}};
-volatile round_robin_buffer<4> command_buffer = {0,0,0,0, {0}};
+//volatile round_robin_buffer<4> command_buffer = {0,0,0,0, {0}};
 
 
-void execute_command( uint8_t command)
+/// read a triplet from the data buffer and set
+/// the rgb-values for the led with index led_index 
+/// accordingly.
+void set_triplet( uint8_t led_index)
 {
+    volatile led *current = &leds[led_index];
+    current->red.value = data_buffer.read_w();
+    current->green.value = data_buffer.read_w();
+    current->blue.value = data_buffer.read_w();
 }
+
 
 int
 main(void)
@@ -85,16 +104,32 @@ main(void)
 	for (;;)
 	{
         
-        uint8_t command;
-        if (command_buffer.read( &command))
+        uint8_t  command = data_buffer.read_w();
+        switch (command & 0xf0)
         {
-            execute_command( command);
-        }
-         
+            case 0x90:
+                set_triplet( command & 0x07);
+                break;
+            default:
+            break;
+                // ignore
+        }       
 	}
 	return 0;
 }
 
+/// Receive a byte from the serial port and follow a packet protocol
+/// This function implements a state machine that expects the following order of bytes:
+/// 1) noise (random bytes)
+/// 2) preamble (zeroes, 1-n)
+/// 3) end-of-preamble (the value 0x55)
+/// 4) an address byte (0-255)
+/// 5) a byte with a size encoded in the lower 4 bits. upper 4 bits reserved
+/// 6) "size" times a data byte
+/// 7) two checksum bytes
+/// 1) noise again, etc...
+/// If the checksum bytes work out OK, the data bytes will be committed to 
+/// a round-robin buffer.
 ISR( USART_RX_vect)
 {
     static uint8_t     count = 0;
@@ -200,8 +235,16 @@ ISR( USART_RX_vect)
     //data_buffer.write( UDR);
 }
 
-uint8_t do_6pwm(  volatile led *leds)
+/// Do 6 pwm channels and return 6 pwm bits to be sent to
+/// 6 output ports.
+/// This is all assembly, since using the carry bit and
+/// rotating is soooo much faster.
+static uint8_t do_6pwm(  volatile led *leds)
 {
+    // unrolled loop of 6:
+    // for each pwm channel,
+    // add the pwm value to a running counter and rotate the carry bit
+    // into the combined result.
     uint8_t result;
     asm volatile(
         "ld     __tmp_reg__, %a1+\n"
@@ -246,10 +289,14 @@ uint8_t do_6pwm(  volatile led *leds)
     return result;
 }
 
+
 ISR( TIMER1_COMPA_vect)
 {
-    PORTB = do_6pwm( &leds[0]);
-    PORTD = do_6pwm( &leds[2]);
+    // calculate new pwm output states and move to ports.
+    // this would be hard to parametrize through DEFINEs,
+    // so, I'm just hardcoding this.
+    PORTB = do_6pwm( &leds[0]) & 0x3f; // PB0-PB5
+    PORTD = (do_6pwm( &leds[2]) << 1) | 0x81; // PD1-PD6 (PD0 is serial in).
 
 }
 

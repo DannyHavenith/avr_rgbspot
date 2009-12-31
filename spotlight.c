@@ -1,5 +1,5 @@
 //#include <avr/io.h>
-#include <stdlib.h>
+//#include <stdlib.h>
 //#include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 #include <util/crc16.h>
@@ -72,10 +72,8 @@ struct led
 };
 
 
+volatile round_robin_buffer<10> data_buffer = {0,0,0,0, {0}};
 volatile led leds[4];
-volatile round_robin_buffer<> data_buffer = {0,0,0,0, {0}};
-//volatile round_robin_buffer<4> command_buffer = {0,0,0,0, {0}};
-
 
 /// read a triplet from the data buffer and set
 /// the rgb-values for the led with index led_index 
@@ -92,15 +90,35 @@ void set_triplet( uint8_t led_index)
 int
 main(void)
 {
-	leds[0].red.value = 1;
-	leds[0].green.value = 2;
-	leds[0].blue.value = 3;
+    for (int i = 0; i < 4; ++i)
+    {
+	    leds[i].red.value = 0;
+	    leds[i].green.value = 0;
+	    leds[i].blue.value = 0;
+    }
 
+ /*   leds[1].red.value = 16;
+    leds[1].green.value = 32;
+    leds[1].blue.value = 255;
+/*    data_buffer.write( 0x91);
+    data_buffer.write( 0);
+    data_buffer.write( 0);
+    data_buffer.write( 0);
+    data_buffer.write( 0x91);
+    data_buffer.write( 0);
+    data_buffer.write( 0);
+    data_buffer.write( 0);/**/
+    data_buffer.write( 0x91);
+    data_buffer.write( 16);
+    data_buffer.write( 64);
+    data_buffer.write( 255);
+    /**/
     ioinit();
     timer_init();
     usart_init();
     sei();
 
+    //PORTB = 0x3f;
 	for (;;)
 	{
         
@@ -108,7 +126,7 @@ main(void)
         switch (command & 0xf0)
         {
             case 0x90:
-                set_triplet( command & 0x07);
+                set_triplet( command & 0x03);
                 break;
             default:
             break;

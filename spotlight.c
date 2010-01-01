@@ -11,7 +11,7 @@
 /// This means that at 8 Mhz, the timer fires every 500 ticks.
 /// 16000 ticks per second means that an 8 bit pwm will do 
 /// 62.5 cycles per second.
-void timer_init()
+static void timer_init()
 {
 
     // count to 500     
@@ -26,7 +26,7 @@ void timer_init()
     TIMSK |= _BV(OCIE1A);
  }
 
-void usart_init()
+static void usart_init()
 {
     const unsigned long baudrate = 2400;
     const unsigned long ubrr = (F_CPU/(16UL * baudrate)) - 1;
@@ -42,7 +42,7 @@ void usart_init()
 }
 
 
-void ioinit()
+static void ioinit()
 { 
     // hardcoded ioinit, since it's hard to capture the 
     // pin assignments in DEFINES.
@@ -78,7 +78,7 @@ volatile led leds[4];
 /// read a triplet from the data buffer and set
 /// the rgb-values for the led with index led_index 
 /// accordingly.
-void set_triplet( uint8_t led_index)
+static void set_triplet( uint8_t led_index)
 {
     volatile led *current = &leds[led_index];
     current->red.value = data_buffer.read_w();
@@ -90,35 +90,11 @@ void set_triplet( uint8_t led_index)
 int
 main(void)
 {
-    for (int i = 0; i < 4; ++i)
-    {
-	    leds[i].red.value = 0;
-	    leds[i].green.value = 0;
-	    leds[i].blue.value = 0;
-    }
-
- /*   leds[1].red.value = 16;
-    leds[1].green.value = 32;
-    leds[1].blue.value = 255;
-/*    data_buffer.write( 0x91);
-    data_buffer.write( 0);
-    data_buffer.write( 0);
-    data_buffer.write( 0);
-    data_buffer.write( 0x91);
-    data_buffer.write( 0);
-    data_buffer.write( 0);
-    data_buffer.write( 0);/**/
-    data_buffer.write( 0x91);
-    data_buffer.write( 16);
-    data_buffer.write( 64);
-    data_buffer.write( 255);
-    /**/
     ioinit();
     timer_init();
     usart_init();
     sei();
 
-    //PORTB = 0x3f;
 	for (;;)
 	{
         
@@ -165,6 +141,9 @@ ISR( USART_RX_vect)
         } state = Noise;
 
     register uint8_t in = UDR;
+
+
+
     switch (state)
     {
         case Noise:
@@ -224,6 +203,8 @@ ISR( USART_RX_vect)
                 // move to the checksum state
                 if (!--count)
                 {
+
+
                     state = Checksum1;
                 }
             }
@@ -246,7 +227,6 @@ ISR( USART_RX_vect)
             // we're finished with our packet
             // fall back to noise state.
             state = Noise; 
-
             break;
     }
 
@@ -313,8 +293,12 @@ ISR( TIMER1_COMPA_vect)
     // calculate new pwm output states and move to ports.
     // this would be hard to parametrize through DEFINEs,
     // so, I'm just hardcoding this.
-    PORTB = do_6pwm( &leds[0]) & 0x3f; // PB0-PB5
-    PORTD = (do_6pwm( &leds[2]) << 1) | 0x81; // PD1-PD6 (PD0 is serial in).
+
+    volatile led * volatile second_group = &leds[0]; // to work around compiler bug
+    PORTB = do_6pwm( second_group) & 0x3f; // PB0-PB5
+
+    second_group += 2;
+    PORTD = (do_6pwm( second_group) << 1) | 0x81; // PD1-PD6 (PD0 is serial in).
 
 }
 

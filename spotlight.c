@@ -5,7 +5,8 @@
 #include <util/crc16.h>
 #include <stdint.h>
 #include "round_robin_buffer.h"
-
+#include "led_pwm.h"
+#include "led_transitions.h"
 
 /// set up a timer interrupt that fires 16000 times per second,
 /// This means that at 8 Mhz, the timer fires every 500 ticks.
@@ -58,22 +59,11 @@ static void ioinit()
     PORTB = 0;
 }
 
-struct pwm_state
-{
-    uint8_t value; ///< actual pwm value
-    uint8_t counter; ///< running counter
-};
-
-struct led
-{
-    struct pwm_state red;
-    struct pwm_state green;
-    struct pwm_state blue;
-};
 
 
-volatile round_robin_buffer<10> data_buffer = {0,0,0,0, {0}};
+volatile round_robin_buffer<8> data_buffer = {0,0,0,0, {0}};
 volatile led leds[4];
+led_transition transitions[3];
 
 /// read a triplet from the data buffer and set
 /// the rgb-values for the led with index led_index 
@@ -86,6 +76,17 @@ static void set_triplet( uint8_t led_index)
     current->blue.value = data_buffer.read_w();
 }
 
+static void fade( uint8_t led_index)
+{
+    if (led_index > 2) return;
+
+    uint8_t time = data_buffer.read_w();
+    uint8_t new_red = data_buffer.read_w();
+    uint8_t new_green = data_buffer.read_w();
+    uint8_t new_blue = data_buffer.read_w();
+
+    transitions[led_index].setup( leds[led_index], time, new_red, new_green, new_blue);
+}
 
 int
 main(void)
@@ -95,6 +96,13 @@ main(void)
     usart_init();
     sei();
 
+    data_buffer.write( 0xA1);
+    data_buffer.write( 200);
+    data_buffer.write( 128);
+    data_buffer.write( 16);
+    data_buffer.write( 1);
+
+
 	for (;;)
 	{
         
@@ -103,6 +111,9 @@ main(void)
         {
             case 0x90:
                 set_triplet( command & 0x03);
+                break;
+            case 0xA0:
+                fade( command & 0x03);
                 break;
             default:
             break;
@@ -141,8 +152,6 @@ ISR( USART_RX_vect)
         } state = Noise;
 
     register uint8_t in = UDR;
-
-
 
     switch (state)
     {
@@ -233,60 +242,17 @@ ISR( USART_RX_vect)
     //data_buffer.write( UDR);
 }
 
-/// Do 6 pwm channels and return 6 pwm bits to be sent to
-/// 6 output ports.
-/// This is all assembly, since using the carry bit and
-/// rotating is soooo much faster.
-static uint8_t do_6pwm(  volatile led *leds)
+static void transition_step()
 {
-    // unrolled loop of 6:
-    // for each pwm channel,
-    // add the pwm value to a running counter and rotate the carry bit
-    // into the combined result.
-    uint8_t result;
-    asm volatile(
-        "ld     __tmp_reg__, %a1+\n"
-        "ld     r24, %a1          \n"
-        "add    __tmp_reg__, r24  \n" // add the first byte to the second
-        "st     %a1+, __tmp_reg__\n"
-        "rol    %0               \n" // rotate the carry into the pwm bits
-        "\n"
-        "ld     __tmp_reg__, %a1+\n"
-        "ld     r24, %a1          \n"
-        "add    __tmp_reg__, r24  \n" // add the first byte to the second
-        "st     %a1+, __tmp_reg__\n"
-        "rol    %0               \n" // rotate the carry into the pwm bits
-        "\n"
-        "ld     __tmp_reg__, %a1+\n"
-        "ld     r24, %a1          \n"
-        "add    __tmp_reg__, r24  \n" // add the first byte to the second
-        "st     %a1+, __tmp_reg__\n"
-        "rol    %0               \n" // rotate the carry into the pwm bits
-        "\n"
-        "ld     __tmp_reg__, %a1+\n"
-        "ld     r24, %a1          \n"
-        "add    __tmp_reg__, r24  \n" // add the first byte to the second
-        "st     %a1+, __tmp_reg__\n"
-        "rol    %0               \n" // rotate the carry into the pwm bits
-        "\n"
-        "ld     __tmp_reg__, %a1+\n"
-        "ld     r24, %a1          \n"
-        "add    __tmp_reg__, r24  \n" // add the first byte to the second
-        "st     %a1+, __tmp_reg__\n"
-        "rol    %0               \n" // rotate the carry into the pwm bits
-        "\n"
-        "ld     __tmp_reg__, %a1+\n"
-        "ld     r24, %a1          \n"
-        "add    __tmp_reg__, r24  \n" // add the first byte to the second
-        "st     %a1+, __tmp_reg__\n"
-        "rol    %0               \n" // rotate the carry into the pwm bits
-        "\n"
-        : "=a" (result)
-        : "e" (leds)
-        : "r24");
-    return result;
+    volatile led *l = leds;
+    for (led_transition *t = transitions; t != transitions + 3; ++t, ++l)
+    {
+        if (t->steps)
+        {
+            t->step( *l);
+        }
+    }
 }
-
 
 ISR( TIMER1_COMPA_vect)
 {
@@ -294,11 +260,18 @@ ISR( TIMER1_COMPA_vect)
     // this would be hard to parametrize through DEFINEs,
     // so, I'm just hardcoding this.
 
-    volatile led * volatile second_group = &leds[0]; // to work around compiler bug
-    PORTB = do_6pwm( second_group) & 0x3f; // PB0-PB5
+    // using volatile pointer to work around compiler optimizer bug
+    volatile led * volatile two_leds = &leds[0];
+    PORTB = do_6pwm( two_leds) & 0x3f; // PB0-PB5
 
-    second_group += 2;
-    PORTD = (do_6pwm( second_group) << 1) | 0x81; // PD1-PD6 (PD0 is serial in).
+    two_leds += 2; // next two leds
+    PORTD = (do_6pwm( two_leds) << 1) | 0x81; // PD1-PD6 (PD0 is serial in).
+
+    static uint8_t counter = 0;
+    if (!counter++)
+    {
+        transition_step();
+    }
 
 }
 

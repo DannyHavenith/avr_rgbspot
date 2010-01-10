@@ -71,9 +71,9 @@ led_transition transitions[3];
 static void set_triplet( uint8_t led_index)
 {
     volatile led *current = &leds[led_index];
-    current->red.value = ~data_buffer.read_w();
-    current->green.value = ~data_buffer.read_w();
-    current->blue.value = ~data_buffer.read_w();
+    current->red.value = data_buffer.read_w();
+    current->green.value = data_buffer.read_w();
+    current->blue.value = data_buffer.read_w();
 }
 
 static void fade( uint8_t led_index)
@@ -81,9 +81,9 @@ static void fade( uint8_t led_index)
     if (led_index > 2) return;
 
     uint8_t time = data_buffer.read_w();
-    uint8_t new_red = ~data_buffer.read_w();
-    uint8_t new_green = ~data_buffer.read_w();
-    uint8_t new_blue = ~data_buffer.read_w();
+    uint8_t new_red = data_buffer.read_w();
+    uint8_t new_green = data_buffer.read_w();
+    uint8_t new_blue = data_buffer.read_w();
 
     transitions[led_index].setup( leds[led_index], time, new_red, new_green, new_blue);
 }
@@ -262,10 +262,10 @@ ISR( TIMER1_COMPA_vect)
 
     // using volatile pointer to work around compiler optimizer bug
     volatile led * volatile two_leds = &leds[0];
-    PORTB = do_6pwm( two_leds) & 0x3f; // PB0-PB5
+    PORTB = (do_6pwm( two_leds) & 0x3f) ^ 0x3f; // PB0-PB5
 
     two_leds += 2; // next two leds
-    PORTD = (do_6pwm( two_leds) << 1) | 0x81; // PD1-PD6 (PD0 is serial in).
+    PORTD = ((do_6pwm( two_leds) << 1) | 0x81) ^ 0x7e; // PD1-PD6 (PD0 is serial in).
 
     static uint8_t counter = 0;
     if (!counter++)

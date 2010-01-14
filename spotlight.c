@@ -4,9 +4,26 @@
 #include <avr/interrupt.h>
 #include <util/crc16.h>
 #include <stdint.h>
+#include <avr/eeprom.h>
 #include "round_robin_buffer.h"
 #include "led_pwm.h"
 #include "led_transitions.h"
+
+
+// The address of this device.
+// will be replaced with an eeprom-based address.
+static const int number_of_leds = 3;
+uint8_t     device_address ;
+EEMEM uint8_t stored_device_address;
+EEMEM uint8_t initial_led_values[number_of_leds][3]; // r,g, b values for each led.
+
+volatile round_robin_buffer<8> data_buffer;
+volatile led leds[number_of_leds];
+volatile bool hold_transitions;
+static uint8_t pwm_cycle_counter;
+
+led_transition transitions[number_of_leds];
+
 
 /// set up a timer interrupt that fires 16000 times per second,
 /// This means that at 8 Mhz, the timer fires every 500 ticks.
@@ -49,8 +66,8 @@ static void ioinit()
     // pin assignments in DEFINES.
 
     // PB0-PB5 are PWM 0-5 outputs (rgb0 and rgb1)
-    // PD1-PD6 are PWM 6-11 (rgb2 and rgb3)
-    DDRD = 0x7e; // all but bit 0 and 7 to output
+    // PD4-PD6 are PWM 6-8 (rgb2)
+    DDRD = 0x70; // bits 4,5,6 to output
     DDRB = 0x3f; // bits 0-5 to output
     DDRA = 0;
 
@@ -59,11 +76,21 @@ static void ioinit()
     PORTB = 0;
 }
 
+/// Set the leds to a value as programmed in eeprom
+static void data_init()
+{
+    // first, obtain the device address
+    device_address = eeprom_read_byte( &stored_device_address);
 
+    // then, set the initial led light values.
+    for ( uint8_t led = 0; led < number_of_leds; ++led)
+    {
+        leds[led].red.value     = eeprom_read_byte( &initial_led_values[led][0]);
+        leds[led].green.value   = eeprom_read_byte( &initial_led_values[led][1]);
+        leds[led].blue.value    = eeprom_read_byte( &initial_led_values[led][2]);
+    }
+}
 
-volatile round_robin_buffer<8> data_buffer = {0,0,0,0, {0}};
-volatile led leds[4];
-led_transition transitions[3];
 
 /// read a triplet from the data buffer and set
 /// the rgb-values for the led with index led_index 
@@ -76,16 +103,53 @@ static void set_triplet( uint8_t led_index)
     current->blue.value = data_buffer.read_w();
 }
 
+
 static void fade( uint8_t led_index)
 {
-    if (led_index > 2) return;
+    if (led_index >= number_of_leds) return;
 
     uint8_t time = data_buffer.read_w();
     uint8_t new_red = data_buffer.read_w();
     uint8_t new_green = data_buffer.read_w();
     uint8_t new_blue = data_buffer.read_w();
 
-    transitions[led_index].setup( leds[led_index], time, new_red, new_green, new_blue);
+    if (time)
+    {
+        transitions[led_index].setup( leds[led_index], time, new_red, new_green, new_blue);
+    }
+    else
+    {
+        leds[led_index].red.value = new_red;
+        leds[led_index].green.value = new_green;
+        leds[led_index].blue.value = new_blue;
+    }
+}
+
+/// set the address of this device, under the condition that the 'address button' is being pushed 
+/// the address button is active-low.
+static void set_address()
+{
+    uint8_t new_address = data_buffer.read_w();
+    if (!(PORTD & _BV(3)))
+    {
+        if (eeprom_read_byte( &stored_device_address) != new_address)
+        {
+            eeprom_write_byte( &stored_device_address, new_address);
+        }
+    } 
+}
+
+/// read R, G, and B values and store them in EEPROM memory as startup values
+/// for the given led.
+static void set_initial_values( uint8_t led_index)
+{
+    uint8_t *led_values = initial_led_values[led_index];
+
+    // this takes three writes, while it could be done in one write, but it just takes too much code space
+    // to use eeprom_write_block.
+    eeprom_write_byte( led_values++, data_buffer.read_w());
+    eeprom_write_byte( led_values++, data_buffer.read_w());
+    eeprom_write_byte( led_values++, data_buffer.read_w());
 }
 
 int
@@ -94,13 +158,9 @@ main(void)
     ioinit();
     timer_init();
     usart_init();
+    data_init();
     sei();
 
-    data_buffer.write( 0xA1);
-    data_buffer.write( 200);
-    data_buffer.write( 128);
-    data_buffer.write( 16);
-    data_buffer.write( 1);
 
 
 	for (;;)
@@ -109,12 +169,27 @@ main(void)
         uint8_t  command = data_buffer.read_w();
         switch (command & 0xf0)
         {
-            case 0x90:
+ /*           case 0x90:
                 set_triplet( command & 0x03);
                 break;
+/**/
             case 0xA0:
                 fade( command & 0x03);
                 break;
+            case 0xB0:
+                set_initial_values( command & 0x03);
+                break;
+            case 0xC0:
+                hold_transitions  = true;
+                pwm_cycle_counter = 255; // make sure there is a transition shortly after enabling them.
+                break;
+            case 0xD0:
+                hold_transitions  = false;
+                break;
+            case 0xF0:
+                set_address();
+                break;
+
             default:
             break;
                 // ignore
@@ -138,8 +213,9 @@ main(void)
 ISR( USART_RX_vect)
 {
     static uint8_t     count = 0;
-    static uint8_t     device_address = 0;
     static uint16_t    crc = 0xFFFF;
+    //
+
 
     static enum {
         Noise,
@@ -245,7 +321,7 @@ ISR( USART_RX_vect)
 static void transition_step()
 {
     volatile led *l = leds;
-    for (led_transition *t = transitions; t != transitions + 3; ++t, ++l)
+    for (led_transition *t = transitions; t != transitions + number_of_leds; ++t, ++l)
     {
         if (t->steps)
         {
@@ -258,17 +334,16 @@ ISR( TIMER1_COMPA_vect)
 {
     // calculate new pwm output states and move to ports.
     // this would be hard to parametrize through DEFINEs,
-    // so, I'm just hardcoding this.
+    // so, I'm just hardcoding the ports and the bits.
 
     // using volatile pointer to work around compiler optimizer bug
     volatile led * volatile two_leds = &leds[0];
     PORTB = (do_6pwm( two_leds) & 0x3f) ^ 0x3f; // PB0-PB5
 
     two_leds += 2; // next two leds
-    PORTD = ((do_6pwm( two_leds) << 1) | 0x81) ^ 0x7e; // PD1-PD6 (PD0 is serial in).
+    PORTD = ((do_3pwm( two_leds) << 4) | 0x8f) ^ 0x70; // PD4-PD6 (PD0 is serial in, PD3 is address button).
 
-    static uint8_t counter = 0;
-    if (!counter++)
+    if (!++pwm_cycle_counter && !hold_transitions)
     {
         transition_step();
     }

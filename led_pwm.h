@@ -11,9 +11,9 @@ struct pwm_state
 
 struct led
 {
-    struct pwm_state red;
-    struct pwm_state green;
     struct pwm_state blue;
+    struct pwm_state green;
+    struct pwm_state red;
 };
 
 /// Do 6 pwm channels and return 6 pwm bits to be sent to

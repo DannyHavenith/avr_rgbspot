@@ -12,10 +12,10 @@
 
 // The address of this device.
 // will be replaced with an eeprom-based address.
-static const int number_of_leds = 3;
 uint8_t     device_address ;
+static const int number_of_leds = 3;
 EEMEM uint8_t stored_device_address;
-EEMEM uint8_t initial_led_values[number_of_leds][3]; // r,g, b values for each led.
+EEMEM uint8_t initial_led_values[number_of_leds][3] = {{ 255, 0, 5}, { 0, 0, 0}, {0, 0, 0}}; // r,g, b values for each led.
 
 volatile round_robin_buffer<8> data_buffer;
 volatile led leds[number_of_leds];
@@ -65,15 +65,17 @@ static void ioinit()
     // hardcoded ioinit, since it's hard to capture the 
     // pin assignments in DEFINES.
 
+    // make sure all lights are off.
+    // (and all input pins are pull-up).
+    PORTD = 0xff;
+    PORTB = 0x10;
+
     // PB0-PB5 are PWM 0-5 outputs (rgb0 and rgb1)
     // PD4-PD6 are PWM 6-8 (rgb2)
     DDRD = 0x70; // bits 4,5,6 to output
     DDRB = 0x3f; // bits 0-5 to output
     DDRA = 0;
 
-    // make sure all lights are off.
-    PORTD = 0;
-    PORTB = 0;
 }
 
 /// Set the leds to a value as programmed in eeprom
@@ -85,9 +87,13 @@ static void data_init()
     // then, set the initial led light values.
     for ( uint8_t led = 0; led < number_of_leds; ++led)
     {
-        leds[led].red.value     = eeprom_read_byte( &initial_led_values[led][0]);
-        leds[led].green.value   = eeprom_read_byte( &initial_led_values[led][1]);
-        leds[led].blue.value    = eeprom_read_byte( &initial_led_values[led][2]);
+        register uint8_t red   = eeprom_read_byte( &initial_led_values[led][0]);
+        register uint8_t green = eeprom_read_byte( &initial_led_values[led][1]);
+        register uint8_t blue  = eeprom_read_byte( &initial_led_values[led][2]);
+
+        leds[led].red.value     = red;
+        leds[led].green.value   = green;
+        leds[led].blue.value    = blue;
     }
 }
 
@@ -160,7 +166,6 @@ main(void)
     usart_init();
     data_init();
     sei();
-
 
 
 	for (;;)
@@ -315,7 +320,6 @@ ISR( USART_RX_vect)
             break;
     }
 
-    //data_buffer.write( UDR);
 }
 
 static void transition_step()
@@ -339,14 +343,15 @@ ISR( TIMER1_COMPA_vect)
     // using volatile pointer to work around compiler optimizer bug
     volatile led * volatile two_leds = &leds[0];
     PORTB = (do_6pwm( two_leds) & 0x3f) ^ 0x3f; // PB0-PB5
+    //PORTB = 0x20;
 
     two_leds += 2; // next two leds
     PORTD = ((do_3pwm( two_leds) << 4) | 0x8f) ^ 0x70; // PD4-PD6 (PD0 is serial in, PD3 is address button).
+    //PORTD = 0xff;
 
     if (!++pwm_cycle_counter && !hold_transitions)
     {
         transition_step();
     }
-
 }
 

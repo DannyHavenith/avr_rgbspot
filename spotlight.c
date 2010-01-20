@@ -3,6 +3,7 @@
 //#include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 #include <util/crc16.h>
+#include <util/delay.h>
 #include <stdint.h>
 #include <avr/eeprom.h>
 #include "round_robin_buffer.h"
@@ -161,10 +162,14 @@ static void set_initial_values( uint8_t led_index)
 int
 main(void)
 {
+    _delay_ms( 100);
     ioinit();
-    timer_init();
-    usart_init();
     data_init();
+    timer_init();
+    _delay_ms( 100);
+
+
+    usart_init();
     sei();
 
 

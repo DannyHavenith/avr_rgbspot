@@ -17,16 +17,13 @@ struct round_robin_buffer
 
     /// tentative writes, write to the buffer, but don't
     /// make the data available to readers yet.
-    bool write_tentative( uint8_t value) volatile
+    bool __attribute__((noinline)) write_tentative( uint8_t value) volatile 
     {
-        if (
-                tentative_index != read_index 
-            ||  (tentative_index == write_index && !is_full)
-            )
+        if (!is_full)
         {
             buffer[tentative_index] = value;
             tentative_index = (tentative_index + 1) % buffer_size;
-
+            is_full = tentative_index == read_index;
             return true;
         }
         else
@@ -38,6 +35,10 @@ struct round_robin_buffer
     /// remove all tentative writes
     void reset_tentative() volatile
     {
+        if (tentative_index != write_index)
+        {
+            is_full = false;
+        }
         tentative_index = write_index;
     }
 
@@ -47,9 +48,9 @@ struct round_robin_buffer
     void commit() volatile
     {
         write_index = tentative_index;
-        is_full = (write_index == read_index);
     }
 
+/*
     /// write a value to the queue. 
     /// Don't mix write calls with write_tentative.
     bool write( value_type value) volatile
@@ -70,7 +71,7 @@ struct round_robin_buffer
             return false;
         }
     }
-
+*/
     /// read a value from the queue
     bool read(  value_type *value) volatile
     {
@@ -80,10 +81,12 @@ struct round_robin_buffer
         }
         else
         {
+            //cli();
             *value = buffer[read_index];
             read_index = (read_index + 1) % buffer_size;
             is_full = false;
             return true;
+            //sei();
         }
     }
 

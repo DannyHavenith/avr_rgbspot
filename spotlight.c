@@ -16,7 +16,7 @@
 uint8_t     device_address ;
 static const int number_of_leds = 3;
 EEMEM uint8_t stored_device_address;
-EEMEM uint8_t initial_led_values[number_of_leds][3] = {{ 255, 0, 5}, { 0, 0, 0}, {0, 0, 0}}; // r,g, b values for each led.
+EEMEM uint8_t initial_led_values[number_of_leds][3] = {{ 5, 5, 0}, { 0, 0, 0}, {0, 0, 0}}; // r,g, b values for each led.
 
 volatile round_robin_buffer<8> data_buffer;
 volatile led leds[number_of_leds];
@@ -34,7 +34,7 @@ static void timer_init()
 {
 
     // count to 500     
-	OCR1A = 499; 
+	OCR1A = 1652; 
 
     // Set up timer:
     // * prescaler = 1 (CS1x = 001)
@@ -48,9 +48,9 @@ static void timer_init()
 static void usart_init()
 {
     const unsigned long baudrate = 2400;
-    const unsigned long ubrr = (F_CPU/(16UL * baudrate)) - 1;
+    const unsigned long ubrr = ((F_CPU + 8 * baudrate)/(16UL * baudrate)) - 1;
 
-    UBRRL = ubrr;
+    UBRRL = ubrr & 0xff;
     UBRRH = ubrr >> 8;
 
     // leave the rest default: 8n1, 16 samples per bit
@@ -76,6 +76,7 @@ static void ioinit()
     DDRD = 0x70; // bits 4,5,6 to output
     DDRB = 0x3f; // bits 0-5 to output
     DDRA = 0;
+    PORTA = 0xff;
 
 }
 
@@ -98,7 +99,7 @@ static void data_init()
     }
 }
 
-
+/*
 /// read a triplet from the data buffer and set
 /// the rgb-values for the led with index led_index 
 /// accordingly.
@@ -109,7 +110,7 @@ static void set_triplet( uint8_t led_index)
     current->green.value = data_buffer.read_w();
     current->blue.value = data_buffer.read_w();
 }
-
+*/
 
 static void fade( uint8_t led_index)
 {
@@ -132,6 +133,14 @@ static void fade( uint8_t led_index)
     }
 }
 
+void __attribute__((noinline)) my_eeprom_write_byte( uint8_t *ptr, uint8_t val) 
+{
+    if (eeprom_read_byte( ptr) != val)
+    {
+        eeprom_write_byte( ptr, val);
+    }
+}
+
 /// set the address of this device, under the condition that the 'address button' is being pushed 
 /// the address button is active-low.
 static void set_address()
@@ -139,12 +148,10 @@ static void set_address()
     uint8_t new_address = data_buffer.read_w();
     if (!(PORTD & _BV(3)))
     {
-        if (eeprom_read_byte( &stored_device_address) != new_address)
-        {
-            eeprom_write_byte( &stored_device_address, new_address);
-        }
+        my_eeprom_write_byte( &stored_device_address, new_address);
     } 
 }
+
 
 /// read R, G, and B values and store them in EEPROM memory as startup values
 /// for the given led.
@@ -154,41 +161,39 @@ static void set_initial_values( uint8_t led_index)
 
     // this takes three writes, while it could be done in one write, but it just takes too much code space
     // to use eeprom_write_block.
-    eeprom_write_byte( led_values++, data_buffer.read_w());
-    eeprom_write_byte( led_values++, data_buffer.read_w());
-    eeprom_write_byte( led_values++, data_buffer.read_w());
+    my_eeprom_write_byte( led_values++, data_buffer.read_w());
+    my_eeprom_write_byte( led_values++, data_buffer.read_w());
+    my_eeprom_write_byte( led_values++, data_buffer.read_w());
 }
 
 int
 main(void)
 {
-    _delay_ms( 100);
     ioinit();
     data_init();
     timer_init();
-    _delay_ms( 100);
-
-
     usart_init();
     sei();
-
-
+//    _delay_ms( 500);
+//    transitions[0].setup( leds[0], 1, 255, 80, 5);
+//    _delay_ms( 500);
+//    transitions[0].setup( leds[0], 1, 0, 80, 5);
+    
 	for (;;)
 	{
         
         uint8_t  command = data_buffer.read_w();
         switch (command & 0xf0)
         {
- /*           case 0x90:
-                set_triplet( command & 0x03);
-                break;
-/**/
+ 
             case 0xA0:
                 fade( command & 0x03);
                 break;
+                
             case 0xB0:
                 set_initial_values( command & 0x03);
                 break;
+                
             case 0xC0:
                 hold_transitions  = true;
                 pwm_cycle_counter = 255; // make sure there is a transition shortly after enabling them.
@@ -199,7 +204,6 @@ main(void)
             case 0xF0:
                 set_address();
                 break;
-
             default:
             break;
                 // ignore

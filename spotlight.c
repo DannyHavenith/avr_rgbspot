@@ -16,7 +16,7 @@
 uint8_t     device_address ;
 static const int number_of_leds = 3;
 EEMEM uint8_t stored_device_address;
-EEMEM uint8_t initial_led_values[number_of_leds][3] = {{ 5, 5, 0}, { 0, 0, 0}, {0, 0, 0}}; // r,g, b values for each led.
+EEMEM uint8_t initial_led_values[number_of_leds][3] = {{ 5, 5, 5}, { 0, 0, 0}}; // r,g, b values for each led.
 
 volatile round_robin_buffer<8> data_buffer;
 volatile led leds[number_of_leds];
@@ -99,7 +99,7 @@ static void data_init()
     }
 }
 
-/*
+
 /// read a triplet from the data buffer and set
 /// the rgb-values for the led with index led_index 
 /// accordingly.
@@ -110,7 +110,7 @@ static void set_triplet( uint8_t led_index)
     current->green.value = data_buffer.read_w();
     current->blue.value = data_buffer.read_w();
 }
-*/
+
 
 static void fade( uint8_t led_index)
 {
@@ -174,11 +174,9 @@ main(void)
     timer_init();
     usart_init();
     sei();
-//    _delay_ms( 500);
-//    transitions[0].setup( leds[0], 1, 255, 80, 5);
-//    _delay_ms( 500);
-//    transitions[0].setup( leds[0], 1, 0, 80, 5);
-    
+
+
+  
 	for (;;)
 	{
         
@@ -201,6 +199,9 @@ main(void)
             case 0xD0:
                 hold_transitions  = false;
                 break;
+//            case 0xE0: // not enough rom for this one.
+//                set_triplet( command & 0x03);
+//                break;
             case 0xF0:
                 set_address();
                 break;
@@ -293,7 +294,7 @@ ISR( USART_RX_vect)
             // the whole packet
             if (!data_buffer.write_tentative( in))
             {
-                data_buffer.reset_tentative();
+                //data_buffer.reset_tentative();
                 state = Noise;
             }
             else
@@ -320,7 +321,7 @@ ISR( USART_RX_vect)
             }
             else
             {
-                data_buffer.reset_tentative();
+                //data_buffer.reset_tentative();
             }
 
             // we're finished with our packet
@@ -354,8 +355,8 @@ ISR( TIMER1_COMPA_vect)
     PORTB = (do_6pwm( two_leds) & 0x3f) ^ 0x3f; // PB0-PB5
     //PORTB = 0x20;
 
-    two_leds += 2; // next two leds
-    PORTD = ((do_3pwm( two_leds) << 4) | 0x8f) ^ 0x70; // PD4-PD6 (PD0 is serial in, PD3 is address button).
+    //two_leds += 2; // next two leds
+    //PORTD = ((do_3pwm( two_leds) << 4) | 0x8f) ^ 0x70; // PD4-PD6 (PD0 is serial in, PD3 is address button).
     //PORTD = 0xff;
 
     if (!++pwm_cycle_counter && !hold_transitions)

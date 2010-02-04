@@ -37,10 +37,11 @@ struct led_transition
                 uint8_t time, uint8_t new_red, uint8_t new_green, uint8_t new_blue)
     {
         treshold = time;
-        steps = time;
+        steps = 0;
         setup_color( red, current.red, new_red);
         setup_color( green, current.green, new_green);
         setup_color( blue, current.blue, new_blue);
+        steps = time;
     }
 
   private:

@@ -1,7 +1,6 @@
 //#include <avr/io.h>
 //#include <stdlib.h>
 //#include <avr/pgmspace.h>
-#define F_CPU 20000000L
 #include <avr/interrupt.h>
 #include <util/crc16.h>
 #include <util/delay.h>
@@ -107,18 +106,6 @@ static void data_init()
         leds[led].green.value   = green;
         leds[led].blue.value    = blue;
     }
-}
-
-
-/// read a triplet from the data buffer and set
-/// the rgb-values for the led with index led_index 
-/// accordingly.
-static void set_triplet( uint8_t led_index)
-{
-    volatile led *current = &leds[led_index];
-    current->red.value = data_buffer.read_w();
-    current->green.value = data_buffer.read_w();
-    current->blue.value = data_buffer.read_w();
 }
 
 
@@ -262,6 +249,7 @@ ISR( USART_RX_vect)
     switch (state)
     {
         case Noise:
+        	// if we receive a zero, it could be the start of a preamble
             if (!in)
             {
                 state = Preamble;
@@ -269,6 +257,8 @@ ISR( USART_RX_vect)
             break;
         case Preamble:
         {
+        	// remain in preamble state as long as we receive zeros, 0x55 means end-of-preamble,
+        	// anything else is noise.
             const uint8_t end_preamble = 0x55;
             if (in)
             {
@@ -284,6 +274,7 @@ ISR( USART_RX_vect)
         }
             break;
         case Address:
+        	// we expect an address byte here
             // address zero means 'all', both as a packet
             // address and as a device address. 
             // in any other case, the packet addres should match
@@ -294,22 +285,27 @@ ISR( USART_RX_vect)
             }
             else 
             {
+            	// goto noise state and wait for the next preamble to appear
                 state = Noise;
             }
             break;
         case Size:
+        	// we expect a size byte. lower nibble is payload size minus one.
+        	// upper nibble is reserved for future use and should be ignored/set to zero.
             count = (in & 0x0F) + 1;
             state = Data;
             data_buffer.reset_tentative();
             crc = 0x0000; // reset crc
             break;
         case Data:
+        	// we're expecting data bytes here.
             crc = _crc_xmodem_update( crc, in);
             // if we cannot write to the data_buffer, discard
             // the whole packet
             if (!data_buffer.write_tentative( in))
             {
-                //data_buffer.reset_tentative();
+            	// data didn't fit in the buffer anymore, ignore whole packet.
+                //data_buffer.reset_tentative(); // < this is done in the 'size' state
                 state = Noise;
             }
             else
@@ -334,10 +330,7 @@ ISR( USART_RX_vect)
                 // checksum verified, commit packet data to data_buffer
                 data_buffer.commit();
             }
-            else
-            {
-                //data_buffer.reset_tentative();
-            }
+            //data_buffer.reset_tentative() is done in the 'size' state
 
             // we're finished with our packet
             // fall back to noise state.

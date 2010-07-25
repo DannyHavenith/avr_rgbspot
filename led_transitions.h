@@ -33,7 +33,7 @@ struct led_transition
         return (steps != 0);
     }
 
-    void setup( volatile led &current, 
+    void __attribute__((noinline)) setup( volatile led &current,
                 uint8_t time, uint8_t new_red, uint8_t new_green, uint8_t new_blue)
     {
         treshold = time;

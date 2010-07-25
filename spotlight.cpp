@@ -130,6 +130,11 @@ static void fade( uint8_t led_index, uint8_t time)
     }
 }
 
+static void wait_for_fader( uint8_t fader)
+{
+	while (transitions[fader].steps) /* wait */;
+}
+
 void __attribute__((noinline)) my_eeprom_write_byte( uint8_t *ptr, uint8_t val) 
 {
     if (eeprom_read_byte( ptr) != val)
@@ -163,6 +168,8 @@ static void set_initial_values( uint8_t led_index)
     my_eeprom_write_byte( led_values++, data_buffer.read_w());
     my_eeprom_write_byte( led_values++, data_buffer.read_w());
 }
+
+
 
 int
 main(void)
@@ -206,6 +213,9 @@ main(void)
             case 0xF0:  // program a new device address
                 set_address();
                 break;
+            case 0x90: // wait for a fader to complete
+            	wait_for_fader( command & 0x03);
+            	break;
 
             default:    // ignore anything else
             break;

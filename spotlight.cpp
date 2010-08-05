@@ -14,20 +14,23 @@
 // The address of this device.
 // will be filled with an eeprom-based address.
 uint8_t     device_address ;
-static const int number_of_leds = 2;
+
+// by now, several parts of the code already assume 2 spots
+// so you can't increase this without changing the code.
+static const int number_of_spots = 2;
 
 // eeprom variables
 /// the stored address of this device
 EEMEM uint8_t stored_device_address;
 
 /// initial values for each led.
-EEMEM uint8_t initial_led_values[number_of_leds][3] = {{ 5, 5, 5}, { 0, 0, 0}}; // r,g, b values for each led.
+EEMEM uint8_t initial_led_values[number_of_spots][3] = {{ 5, 1, 1}, { 1, 5, 1}}; // r,g, b values for each led.
 
 /// this buffer is used to transfer incoming bytes from the serial interrupt to the main 
 /// program.
 volatile round_robin_buffer<8> data_buffer;
 /// led state
-volatile led leds[number_of_leds];
+volatile led leds[number_of_spots];
 /// do not perform any transitions while this is set
 volatile bool hold_transitions;
 
@@ -35,7 +38,7 @@ volatile bool hold_transitions;
 static uint8_t pwm_cycle_counter;
 
 /// transition state for each led
-led_transition transitions[number_of_leds];
+led_transition transitions[number_of_spots];
 
 
 /// set up a timer that fires at approximately 50 * 256 times per second.
@@ -96,7 +99,7 @@ static void data_init()
     device_address = eeprom_read_byte( &stored_device_address);
 
     // then, set the initial led light values.
-    for ( uint8_t led = 0; led < number_of_leds; ++led)
+    for ( uint8_t led = 0; led < number_of_spots; ++led)
     {
         register uint8_t red   = eeprom_read_byte( &initial_led_values[led][0]);
         register uint8_t green = eeprom_read_byte( &initial_led_values[led][1]);
@@ -364,7 +367,7 @@ ISR( USART_RX_vect)
 static void transition_step()
 {
     volatile led *l = leds;
-    for (led_transition *t = transitions; t != transitions + number_of_leds; ++t, ++l)
+    for (led_transition *t = transitions; t != transitions + number_of_spots; ++t, ++l)
     {
         if (t->steps)
         {

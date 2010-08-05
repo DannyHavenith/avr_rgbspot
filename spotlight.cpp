@@ -14,7 +14,7 @@
 // The address of this device.
 // will be filled with an eeprom-based address.
 uint8_t     device_address ;
-static const int number_of_leds = 3;
+static const int number_of_leds = 2;
 
 // eeprom variables
 /// the stored address of this device
@@ -108,26 +108,37 @@ static void data_init()
     }
 }
 
+void __attribute__((noinline)) do_fade( uint8_t led, uint8_t time, uint8_t red, uint8_t green, uint8_t blue)
+{
+	if (time)
+	{
+		transitions[led].setup( leds[led], time, red, green, blue);
+	}
+    else
+    {
+        leds[led].red.value = red;
+        leds[led].green.value = green;
+        leds[led].blue.value = blue;
+    }
+}
 
 static void fade( uint8_t led_index, uint8_t time)
 {
-    if (led_index >= number_of_leds) return;
+
 
 //    uint8_t time = data_buffer.read_w();
     uint8_t new_red = data_buffer.read_w();
     uint8_t new_green = data_buffer.read_w();
     uint8_t new_blue = data_buffer.read_w();
 
-    if (time)
-    {
-        transitions[led_index].setup( leds[led_index], time, new_red, new_green, new_blue);
-    }
-    else
-    {
-        leds[led_index].red.value = new_red;
-        leds[led_index].green.value = new_green;
-        leds[led_index].blue.value = new_blue;
-    }
+	if (!led_index || led_index == 3)
+	{
+		do_fade( 0, time, new_red, new_green, new_blue);
+	}
+	if (led_index & 0x01)//(led_index == 1 || led_index == 3)
+	{
+		do_fade( 1, time, new_red, new_green, new_blue);
+	}
 }
 
 static void wait_for_fader( uint8_t fader)
@@ -135,7 +146,7 @@ static void wait_for_fader( uint8_t fader)
 	while (transitions[fader].steps) /* wait */;
 }
 
-void __attribute__((noinline)) my_eeprom_write_byte( uint8_t *ptr, uint8_t val) 
+void  my_eeprom_write_byte( uint8_t *ptr, uint8_t val)
 {
     if (eeprom_read_byte( ptr) != val)
     {
@@ -190,11 +201,11 @@ main(void)
         {
  
             case 0xA0:  // fade with a given timeout to new values
-                fade( command & 0x03, data_buffer.read_w());
+                fade( command & 0x03 , data_buffer.read_w());
                 break;
                 
             case 0xB0:  // program startup values for a spot
-                set_initial_values( command & 0x03);
+                set_initial_values( command & 0x01);
                 break;
                 
             case 0xC0:  // hold all transitions.
@@ -214,7 +225,7 @@ main(void)
                 set_address();
                 break;
             case 0x90: // wait for a fader to complete
-            	wait_for_fader( command & 0x03);
+            	wait_for_fader( command & 0x01);
             	break;
 
             default:    // ignore anything else

@@ -38,9 +38,9 @@ struct led_transition
     {
         treshold = time;
         steps = 0;
-        setup_color( red, current.red, new_red);
-        setup_color( green, current.green, new_green);
         setup_color( blue, current.blue, new_blue);
+        setup_color( green, current.green, new_green);
+        setup_color( red, current.red, new_red);
         steps = time;
     }
 
@@ -54,17 +54,14 @@ struct led_transition
         if (target_value >= pwm.value)
         {
             state.step = target_value - pwm.value;
-            // for some reason, if I move this line to after the
-            // if-statement, the code becomes 300 bytes bigger.
-            state.accumulator = treshold / 2;
             state.direction = 1;
         }
         else
         {
             state.step = pwm.value - target_value;
-            state.accumulator = treshold / 2; 
             state.direction = 0xff; // -1, actually.
         }
+        state.accumulator = treshold / 2;
     } 
 
     void step( bresenham_state &color, volatile pwm_state &led_color)

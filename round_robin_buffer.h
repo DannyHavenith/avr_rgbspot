@@ -90,6 +90,18 @@ struct round_robin_buffer
         }
     }
 
+    bool is_empty() volatile
+    {
+        if (read_index == write_index && !is_full)
+        {
+            return true;
+        }
+        else
+        {
+        	return false;
+    	}
+    }
+
     /// wait for a value and read it.
     value_type read_w() volatile
     {
